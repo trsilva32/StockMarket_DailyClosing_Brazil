@@ -1,0 +1,123 @@
+# Fatos Relevantes
+my.folder<-'//Zeus//monitoramento_compliance_bi$//R//Projects//FatosRelevantes//'
+setwd(my.folder)
+rm(my.folder)
+getwd()
+
+# Libraries ---------------------------------------------------------------
+library(XML)
+library(RCurl)
+library(rvest)
+library(dplyr)
+library(stringr)
+library(data.table)
+
+# #User Input -------------------------------------------------------------
+UserName<-readline(prompt = "Digite seu usuário:")
+Password<-readline(prompt = "Digite sua Senha:")
+proxy = paste0('http://',UserName,':',Password,'@proxy.safra.com.br')
+
+# Proxy Config ----------------------------------------------------------
+opts <- list(
+  proxy         = proxy,
+  proxyusername = UserName, 
+  proxypassword = Password, 
+  proxyport     = 8080)
+
+load("//zeus/monitoramento_compliance_bi$/R/Projects/FatosRelevantes/FatosRelevantes.RData")
+
+
+InicialDate<-max(df.Fatos.Relevantes.Final$Date)
+LastDate<-as.Date(format(Sys.Date(),format="%Y-%m-%d"))
+Link<-paste0('http://www2.bmfbovespa.com.br/Agencia-Noticias/ListarNoticias.aspx?idioma=pt-br&q=&tipoFiltro=3&periodoDe=',InicialDate,'&periodoAte=',LastDate,'&pg=')
+
+i<-1
+
+repeat{
+  print(i)
+  repeat{
+    myLink<-paste0(Link,i)
+  
+    html.fatos<- read_html(myLink)
+    #html.fatos$node()
+  
+    df.Fatos.Relevantes.TMP <- html.fatos %>%
+                                  html_nodes("li") %>%
+                                  html_text() %>%
+                                  as.character()
+    
+    df.Fatos.Relevantes.TMP<-data.frame(df.Fatos.Relevantes.TMP)
+    if (nrow(df.Fatos.Relevantes.TMP) > 0) { 
+      break
+    }
+  }
+    
+  colnames(df.Fatos.Relevantes.TMP)<-c("FullText")
+  df.Fatos.Relevantes.TMP<-gsub('[\r\n]',' ',df.Fatos.Relevantes.TMP$FullText)
+  df.Fatos.Relevantes.TMP<-str_trim(df.Fatos.Relevantes.TMP)
+  df.Fatos.Relevantes.TMP<-data.frame(df.Fatos.Relevantes.TMP)
+  colnames(df.Fatos.Relevantes.TMP)<-c("FullText")
+  df.Fatos.Relevantes.TMP<-data.frame(df.Fatos.Relevantes.TMP[1:20,])
+  colnames(df.Fatos.Relevantes.TMP)<-c("FullText")
+  
+  if(!exists("df.Fatos.Relevantes") && nrow(df.Fatos.Relevantes.TMP)>0) {
+    df.Fatos.Relevantes<-df.Fatos.Relevantes.TMP
+  } else if (exists("df.Fatos.Relevantes") && nrow(df.Fatos.Relevantes.TMP)>0) {
+    df.Fatos.Relevantes<-rbind(df.Fatos.Relevantes,df.Fatos.Relevantes.TMP)
+  }
+  
+  TestDate<-max(as.Date(paste0(substr(df.Fatos.Relevantes.TMP$FullText,7,10),'-',
+                           substr(df.Fatos.Relevantes.TMP$FullText,4,5),'-',
+                           substr(df.Fatos.Relevantes.TMP$FullText,1,2))))
+  
+  i = i + 1
+  gc()
+  
+  if (min(df.Fatos.Relevantes.TMP$Date) <= TestDate) { 
+    break
+  }
+}
+
+df.Fatos.Relevantes.Final<-df.Fatos.Relevantes
+
+#Date
+df.Fatos.Relevantes.Final$Date<-as.Date(paste0(substr(df.Fatos.Relevantes.Final$FullText,7,10),'-',
+                                               substr(df.Fatos.Relevantes.Final$FullText,4,5),'-',
+                                               substr(df.Fatos.Relevantes.Final$FullText,1,2)))
+#Removing NA's rows
+df.Fatos.Relevantes.Final<-df.Fatos.Relevantes.Final[!is.na(df.Fatos.Relevantes.Final$Date),]
+
+#Text Fato Relevante
+df.Fatos.Relevantes.Final$Text<-substr(df.Fatos.Relevantes.Final$FullText,20,500)
+df.Fatos.Relevantes.Final$NChar<-nchar(df.Fatos.Relevantes.Final$Text)
+
+#Companie
+df.Fatos.Relevantes.Final$StartPositionInst<- regexpr(pattern ="\\(",df.Fatos.Relevantes.Final$Text)
+df.Fatos.Relevantes.Final$LastPositionInst<- regexpr(pattern ="\\)",df.Fatos.Relevantes.Final$Text)
+df.Fatos.Relevantes.Final$Companie<-substr(df.Fatos.Relevantes.Final$Text,
+                                           df.Fatos.Relevantes.Final$StartPositionInst+1,
+                                           df.Fatos.Relevantes.Final$LastPositionInst-1)
+df.Fatos.Relevantes.Final$Companie<-gsub(' ','',df.Fatos.Relevantes.Final$Companie)
+df.Fatos.Relevantes.Final$PositionHiffen<- regexpr(pattern ="-",df.Fatos.Relevantes.Final$Companie)
+df.Fatos.Relevantes.Final$Companie<-ifelse(df.Fatos.Relevantes.Final$PositionHiffen==-1,
+                                           df.Fatos.Relevantes.Final$Companie,
+                                           substr(df.Fatos.Relevantes.Final$Companie,1,
+                                           nchar(df.Fatos.Relevantes.Final$Companie)-3))
+#descrition
+df.Fatos.Relevantes.Final$Description<-substr(df.Fatos.Relevantes.Final$Text,
+                                              df.Fatos.Relevantes.Final$LastPositionInst,500)
+df.Fatos.Relevantes.Final$PositionHiffen<- regexpr(pattern ="-",df.Fatos.Relevantes.Final$Description)
+df.Fatos.Relevantes.Final$Description<-ifelse(df.Fatos.Relevantes.Final$PositionHiffen==3,
+                                              substr(df.Fatos.Relevantes.Final$Description,4,500),
+                                            substr(df.Fatos.Relevantes.Final$Description,3,500))
+
+#Select DataSet
+df.Fatos.Relevantes.Final<-df.Fatos.Relevantes.Final[,c("Date","Text","Companie","Description")]
+df.Fatos.Relevantes.Final<-df.Fatos.Relevantes.Final[df.Fatos.Relevantes.Final$Description  %like% "Fato Relevante",]
+df.Fatos.Relevantes.Final<-distinct(df.Fatos.Relevantes.Final)
+
+write.csv2(df.Fatos.Relevantes.Final,file = "df.Fatos.Relevantes.Final.csv")
+write.csv2(df.Fatos.Relevantes,file = "df.Fatos.Relevantes.csv")
+
+save(df.Fatos.Relevantes,df.Fatos.Relevantes.Final,
+     file = "//zeus/monitoramento_compliance_bi$/R/Projects/FatosRelevantes/FatosRelevantes.RData")
